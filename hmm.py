@@ -171,6 +171,52 @@ class HMM:
 
         return list(reversed(path))
 
+    def get_decoding_table(self, obs:list, init_belief:np.ndarray):
+        """
+            Viterbi Algorithm
+            -----------------
+            Performs decoding on the sequence of states to get the 
+            most likely trajectory
+            Finds: s*_{0:t} = argmax_{s_{0:t}} P(S_{0:t}= s_{0:t}| o_{1:t})
+            Parameters:
+            -----------
+            obs: list of observations
+            init_belief: np.array of the initial belief of states
+
+            Returns:
+                The most likely path
+                list of states
+
+            Example:
+            --------
+            obs = ['1','2','4','6','6','6','3','6']
+            init_belief = np.array([0.8,0.2])
+
+            Returns: ['Loaded','Loaded','Loaded','Loaded','Loaded','Loaded','Loaded','Loaded',]
+        """
+        delta = init_belief
+        deltas = []
+        deltas.append(init_belief)
+        max_delta_arg = [] # stores the argument of max(delta)
+        for i in range(len(obs)):
+            argmax_deltas = np.zeros(self.d)
+            max_deltas = np.zeros(self.d)
+            for j in range(self.d):
+                path_probs = delta * self.T[j, :] * self.M[j, self.obs_dict[obs[i]]] # delta*P(st|st-1)*P(O|st)
+                max_deltas[j] = np.max(path_probs)
+                argmax_deltas[j] = np.argmax(path_probs)
+            deltas.append(max_deltas)
+            delta = max_deltas
+            max_delta_arg.append(list(argmax_deltas))
+
+        deltas = np.array(deltas)
+        deltas = deltas/(np.sum(deltas,axis=1))[:,None]
+        df = pd.DataFrame()
+        df['Observation'] = ['None']+obs
+        for i in range(self.d):
+            df[self.state_list[i]] = deltas[:,i]
+        return df
+
     def predict(self, k:int, obs:list, init_belief:np.ndarray):
         """
             Predict the probabilities of next-k states given a sequence of observations
