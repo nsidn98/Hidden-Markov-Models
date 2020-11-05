@@ -45,7 +45,7 @@ class HMM:
         self.state_list = state_list
         self.obs_dict = obs_dict
 
-    def filtering(self, obs:list, init_belief:np.ndarray):
+    def filtering(self, obs:list, init_belief:np.ndarray, normalize:bool=True):
         """
             Perform filtering on the given observation sequence
             Finds: P(S_t | o_{1:t})
@@ -53,6 +53,7 @@ class HMM:
             -----------
             obs: list of observations
             init_belief: np.array of the initial belief of states
+            normalize: whether to normalize the belief values (to interpret as probabilities)
 
             Example:
             --------
@@ -66,12 +67,14 @@ class HMM:
         P_t = []
         P_t.append(init_belief)
         for i in range(len(obs)):
-            p_t_non_norm = self.M[:,self.obs_dict[obs[i]]]*self.T.dot(p_t) 
-            p_t = p_t_non_norm/np.sum(p_t_non_norm)
+            p_t_non_norm = self.M[:,self.obs_dict[obs[i]]]*self.T.dot(p_t)
+            # normalize
+            if normalize:
+                p_t = p_t_non_norm/np.sum(p_t_non_norm)
             P_t.append(p_t)
         return np.array(P_t)
 
-    def smoothing(self, obs:list, init_belief:np.ndarray):
+    def smoothing(self, obs:list, init_belief:np.ndarray, normalize: bool = True):
         """
             Perform smoothing on the sequence of observations
             Finds: P(S_{k}|o_{1:t}) for k<t
@@ -79,6 +82,7 @@ class HMM:
             -----------
             obs: list of observations
             init_belief: np.array of the initial belief of states
+            normalize: whether to normalize the belief values (to interpret as probabilities)
 
             Example:
             --------
@@ -87,17 +91,18 @@ class HMM:
         """
         p_hat = self.filtering(obs, init_belief)
         b_kt = [] # will add in a reverse manner; have to flip upside down
-        b_kt.append(np.array([1,1]))
+        b_kt.append(np.ones(self.d))
         for i in range(len(obs)):
             b_mt = (b_kt[i] * self.M[:,self.obs_dict[obs[len(obs)-i-1]]]).dot(self.T) # (bmt*M[:,o]).T
             b_kt.append(b_mt)
         b_kt = np.flipud(b_kt) # flipping
         p_tilde_non_norm = b_kt*p_hat
-        # normalise
-        p_tilde = p_tilde_non_norm/(np.sum(p_tilde_non_norm,axis=1))[:,None]
+        # normalize
+        if normalize:
+            p_tilde = p_tilde_non_norm/(np.sum(p_tilde_non_norm,axis=1))[:,None]
         return p_hat, p_tilde
 
-    def get_smoothing_table(self, obs:list, init_belief:np.ndarray):
+    def get_smoothing_table(self, obs:list, init_belief:np.ndarray, normalize:bool=True):
         """
             Perform smoothing and filtering on the sequence of observations
             and print a table
@@ -105,13 +110,14 @@ class HMM:
             -----------
             obs: list of observations
             init_belief: np.array of the initial belief of states
+            normalize: whether to normalize the belief values (to interpret as probabilities)
 
             Example:
             --------
             obs = ['1','2','4','6','6','6','3','6']
             init_belief = np.array([0.8,0.2])
         """
-        p_hat, p_tilde = self.smoothing(obs,init_belief)
+        p_hat, p_tilde = self.smoothing(obs,init_belief, normalize)
         p_hat_r = np.around(p_hat,4)
         p_tilde_r = np.around(p_tilde,4)
         df = pd.DataFrame()
@@ -171,7 +177,7 @@ class HMM:
 
         return list(reversed(path))
 
-    def get_decoding_table(self, obs:list, init_belief:np.ndarray):
+    def get_decoding_table(self, obs:list, init_belief:np.ndarray, normalize:bool=True):
         """
             Viterbi Algorithm
             -----------------
@@ -182,6 +188,7 @@ class HMM:
             -----------
             obs: list of observations
             init_belief: np.array of the initial belief of states
+            normalize: whether to normalize the belief values (to interpret as probabilities)
 
             Returns:
                 The most likely path
@@ -210,12 +217,69 @@ class HMM:
             max_delta_arg.append(list(argmax_deltas))
 
         deltas = np.array(deltas)
-        deltas = deltas/(np.sum(deltas,axis=1))[:,None]
+        # normalize
+        if normalize:
+            deltas = deltas/(np.sum(deltas,axis=1))[:,None]
         df = pd.DataFrame()
         df['Observation'] = ['None']+obs
         for i in range(self.d):
             df[self.state_list[i]] = deltas[:,i]
         return df
+
+    def get_decoding_table_new(self, obs:list, init_belief:np.ndarray, normalize:bool=True):
+        """
+            Viterbi Algorithm
+            -----------------
+            Performs decoding on the sequence of states to get the 
+            most likely trajectory
+            Finds: s*_{0:t} = argmax_{s_{0:t}} P(S_{0:t}= s_{0:t}| o_{1:t})
+            Parameters:
+            -----------
+            obs: list of observations
+            init_belief: np.array of the initial belief of states
+            normalize: whether to normalize the belief values (to interpret as probabilities)
+
+            Returns:
+                The most likely path
+                list of states
+
+            Example:
+            --------
+            obs = ['1','2','4','6','6','6','3','6']
+            init_belief = np.array([0.8,0.2])
+
+            Returns: ['Loaded','Loaded','Loaded','Loaded','Loaded','Loaded','Loaded','Loaded',]
+        """
+        delta = init_belief
+        deltas = []
+        all_deltas = []
+        deltas.append(init_belief)
+        max_delta_arg = [] # stores the argument of max(delta)
+        for i in range(len(obs)):
+            obs_delta = []
+            argmax_deltas = np.zeros(self.d)
+            max_deltas = np.zeros(self.d)
+            for j in range(self.d):
+                path_probs = delta * self.T[j, :] * self.M[j, self.obs_dict[obs[i]]] # delta*P(st|st-1)*P(O|st)
+                obs_delta.append(f'{delta}*{self.T[j, :]}*{self.M[j, self.obs_dict[obs[i]]]} = {path_probs}')
+                max_deltas[j] = np.max(path_probs)
+                argmax_deltas[j] = np.argmax(path_probs)
+            deltas.append(max_deltas)
+            all_deltas.append(obs_delta)
+            delta = max_deltas
+            max_delta_arg.append(list(argmax_deltas))
+
+        deltas = np.array(deltas)
+        # normalize
+        if normalize:
+            deltas = deltas/(np.sum(deltas,axis=1))[:,None]
+        df = pd.DataFrame()
+        for i in range(len(all_deltas)):
+            df['delta '+str(i+1)] = all_deltas[i]
+        with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
+            pd.set_option('display.max_colwidth', 199)  # or 199
+            print(df)
+        # print(df)
 
     def predict(self, k:int, obs:list, init_belief:np.ndarray):
         """
